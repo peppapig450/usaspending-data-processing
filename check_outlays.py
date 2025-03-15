@@ -30,7 +30,6 @@ COLUMN_RENAME_MAP = {
 }
 
 
-
 def load_zstd_with_pyarrow(
     zstd_path: Path, file_index: int
 ) -> tuple[pl.LazyFrame | None, int]:
@@ -59,7 +58,7 @@ def load_zstd_with_pyarrow(
 
         # Convert to Polars LazyFrame
         row_count = len(table)
-        df = pl.from_arrow(table).rename(COLUMN_RENAME_MAP) #type: ignore
+        df = pl.from_arrow(table).rename(COLUMN_RENAME_MAP)  # type: ignore
         logger.info(
             f"Processed {zstd_path.name} (file {file_index}) - {len(table):,} rows"
         )
@@ -77,13 +76,8 @@ def run_query_over_all_data(
     logger.info(f"Total pre-filtered dataset size: {total_rows:,} rows")
 
     query = combined_lazy_df.filter(
-        pl.col("end_date")
-        .cast(pl.Date, strict=False)
-        .dt.year()
-        .eq(2024)
-        & pl.col("outlay_amount")
-        .cast(pl.Float64, strict=False)
-        .gt(1_000_000)
+        pl.col("end_date").cast(pl.Date, strict=False).dt.year().eq(2024)
+        & pl.col("outlay_amount").cast(pl.Float64, strict=False).gt(1_000_000)
     )
 
     logger.info("Executing query with streaming...")
@@ -130,6 +124,44 @@ def run_query_over_all_data(
     logger.info(
         f"Outlay > Current: {len(exceeds_current):,} ({len(exceeds_current) / total_rows_result * 100:.1f}%)"
     )
+
+    # Categorize obligations vs potential value
+    comparison_df = result_df.select(
+        [
+            pl.col("outlay_amount").fill_null(0).alias("obligations"),
+            pl.col("potential_award_value").fill_null(0).alias("potential"),
+        ]
+    ).with_columns(
+        [
+            # Categorize based on comparison
+            pl.when(pl.col("obligations") < pl.col("potential"))
+            .then(pl.lit("less_than"))
+            .when(pl.col("obligations") == pl.col("potential"))
+            .then(pl.lit("equal"))
+            .otherwise(pl.lit("greater_than"))
+            .alias("comparison")
+        ]
+    )
+
+    # Count occurances in each category
+    category_counts = (
+        comparison_df.group_by("comparison")
+        .agg(pl.len().alias("len"))
+        .with_columns([(pl.col("len") / total_rows_result * 100).alias("percentage")])
+    )
+
+    # Log results in desired format
+    logger.info("Obligations Vs Potential Value breakdown:")
+    for row in category_counts.iter_rows(named=True):
+        match row["comparison"]:
+            case "less_than":
+                logger.info(
+                    f"- {row['percentage']:.1f}% had obligations < potential value"
+                )
+            case "equal":
+                logger.info(f"- {row['percentage']:.1f}% were equal")
+            case "greater_than":
+                logger.info(f"- {row['percentage']:.1f}% went over")
 
     return result_df
 
