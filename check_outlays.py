@@ -1,13 +1,10 @@
-import cProfile
 import logging
-import pstats
 from pathlib import Path
+import argparse
 
 import polars as pl
-import pyarrow as pa
 import pyarrow.csv as pa_csv
 import zstandard as zstd
-from memory_profiler import profile
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(
@@ -24,11 +21,19 @@ REQUIRED_COLUMNS = [
     "potential_total_value_of_award",
 ]
 
-FIRST_ROW_SIZE: int = 8682
+# Define a mapping from original column names to simpler names
+COLUMN_RENAME_MAP = {
+    "period_of_performance_current_end_date": "end_date",
+    "total_outlayed_amount_for_overall_award": "outlay_amount",
+    "current_total_value_of_award": "current_award_value",
+    "potential_total_value_of_award": "potential_award_value",
+}
 
 
-@profile
-def load_zstd_with_pyarrow(zstd_path: Path, file_index: int) -> pl.LazyFrame | None:
+
+def load_zstd_with_pyarrow(
+    zstd_path: Path, file_index: int
+) -> tuple[pl.LazyFrame | None, int]:
     """Decompress zstd file and load required columns with PyArrow."""
     try:
         # Open zstd file and decompress in streaming mode
@@ -36,33 +41,6 @@ def load_zstd_with_pyarrow(zstd_path: Path, file_index: int) -> pl.LazyFrame | N
             zstd_path.open("rb") as zstd_file,
             zstd.ZstdDecompressor().stream_reader(zstd_file) as reader,
         ):
-            preview_size = (
-                FIRST_ROW_SIZE  # 8.662KB for previewing headers and some rows
-            )
-
-            # Read a small chunk for header extraction
-            if not (preview_buffer := reader.read(preview_size)):
-                logger.error("Empty preview buffer for %s", zstd_path.name)
-                return None
-
-            # Use PyArrow to parse headers and detect delimiter
-            table_preview = pa_csv.read_csv(
-                pa.BufferReader(preview_buffer),
-                read_options=pa_csv.ReadOptions(),  # Small block for preview
-                parse_options=pa_csv.ParseOptions(),
-            )
-            headers = table_preview.column_names
-            logger.debug(f"Headers in {zstd_path.name}: {headers}")
-
-            # Check for missing required columns
-            missing_cols = [col for col in REQUIRED_COLUMNS if col not in headers]
-            if missing_cols:
-                logger.error(
-                    f"Skipping {zstd_path.name} (file {file_index}): "
-                    f"Missing required columns: {missing_cols}"
-                )
-                return None
-
             read_options = pa_csv.ReadOptions(
                 block_size=64 << 20,  # 64MB chunks
             )
@@ -80,27 +58,30 @@ def load_zstd_with_pyarrow(zstd_path: Path, file_index: int) -> pl.LazyFrame | N
             )
 
         # Convert to Polars LazyFrame
-        df = pl.from_arrow(table)
+        row_count = len(table)
+        df = pl.from_arrow(table).rename(COLUMN_RENAME_MAP) #type: ignore
         logger.info(
             f"Processed {zstd_path.name} (file {file_index}) - {len(table):,} rows"
         )
-        return df.lazy()  # type: ignore
+        return df.lazy(), row_count  # type: ignore
     except Exception:
         logger.exception("Error processing %s", zstd_path)
-        return None
+        return None, 0
 
 
-@profile
-def run_query_over_all_data(lazy_dfs: list[pl.LazyFrame]) -> pl.DataFrame:
+def run_query_over_all_data(
+    lazy_dfs: list[pl.LazyFrame], total_rows: int, sample_fraction: float | None = None
+) -> pl.DataFrame:
     """Execute query over combined LazyFrames."""
     combined_lazy_df = pl.concat(lazy_dfs, how="vertical_relaxed")
+    logger.info(f"Total pre-filtered dataset size: {total_rows:,} rows")
 
     query = combined_lazy_df.filter(
-        pl.col("period_of_performance_current_end_date")
+        pl.col("end_date")
         .cast(pl.Date, strict=False)
         .dt.year()
         .eq(2024)
-        & pl.col("total_outlayed_amount_for_overall_award")
+        & pl.col("outlay_amount")
         .cast(pl.Float64, strict=False)
         .gt(1_000_000)
     )
@@ -109,73 +90,64 @@ def run_query_over_all_data(lazy_dfs: list[pl.LazyFrame]) -> pl.DataFrame:
     filtered_df = query.collect(
         predicate_pushdown=True,
         projection_pushdown=True,
-        slice_pushdown=True,  # Set to true if we work with a subset of data
+        slice_pushdown=True
+        if sample_fraction
+        else False,  # Set to true if we work with a subset of data
     )
 
     filtered_rows = len(filtered_df)
-    logger.info(f"Filtered dataset size: {filtered_rows:,} rows")
-
-    # Sample a fraction (e.g., 10%) of the filtered data
-    fraction_to_sample = 0.25  # Adjust this value as needed (e.g., 0.05 for 5%)
-    result_df = filtered_df.sample(fraction=fraction_to_sample, shuffle=True, seed=69)
-    sampled_rows = len(result_df)
     logger.info(
-        f"Sampled {sampled_rows:,} rows ({fraction_to_sample * 100:.1f}% of filtered data)"
+        f"Filtered dataset size: {filtered_rows:,} rows "
+        f"({filtered_rows / total_rows * 100:.1f}% of total)"
     )
+
+    # Apply sampling if specified
+    if sample_fraction is not None:
+        if not 0 < sample_fraction <= 1:
+            raise ValueError("Sample fraction must be between 0 and 1")
+        result_df = filtered_df.sample(fraction=sample_fraction, shuffle=True, seed=69)
+        sampled_rows = len(result_df)
+        logger.info(
+            f"Sampled {sampled_rows:,} rows ({sample_fraction * 100:.1f}% of filtered data)"
+        )
+    else:
+        result_df = filtered_df
+        logger.info("Using entire filtered dataset (no sampling)")
 
     # Analysis
-    total_rows = len(result_df)
+    total_rows_result = len(result_df)
     less_than_potential = result_df.filter(
-        pl.col("total_outlayed_amount_for_overall_award").fill_null(0)
-        < pl.col("potential_total_value_of_award").fill_null(0)
+        pl.col("outlay_amount").fill_null(0)
+        < pl.col("potential_award_value").fill_null(0)
     )
     exceeds_current = result_df.filter(
-        pl.col("total_outlayed_amount_for_overall_award").fill_null(0)
-        > pl.col("current_total_value_of_award").fill_null(0)
+        pl.col("outlay_amount").fill_null(0)
+        > pl.col("current_award_value").fill_null(0)
     )
 
-    logger.info(f"Total contracts: {total_rows:,}")
+    logger.info(f"Total contracts: {total_rows_result:,}")
     logger.info(f"Outlay < Potential: {len(less_than_potential):,}")
     logger.info(
-        f"Outlay > Current: {len(exceeds_current):,} ({len(exceeds_current) / total_rows * 100:.1f}%)"
+        f"Outlay > Current: {len(exceeds_current):,} ({len(exceeds_current) / total_rows_result * 100:.1f}%)"
     )
 
     return result_df
 
 
-def profile_main():
-    extract_dir = Path("2024_awards")
-    zstd_files = sorted(extract_dir.glob("*.zst"), key=lambda f: f.stat().st_size)
-
-    if not zstd_files:
-        logger.error("No zstd files found in directory")
-        return
-
-    # Get the first two files
-    first_two_files = zstd_files[:2]
-
-    for file in first_two_files:
-        logging.info(
-            f"Profiling file: {file.name} ({file.stat().st_size / (1 << 20):.2f} MB compressed)"
-        )
-
-        # Profile memory and time for loading
-        lazy_df = load_zstd_with_pyarrow(file, 1)
-        if lazy_df is None:
-            logging.error(f"Failed to load file: {file.name}")
-            continue  # Continue to the next file.
-
-        # Profile memory and time for query execution
-        profiler = cProfile.Profile()
-        result_df = profiler.runcall(run_query_over_all_data, [lazy_df])
-        profiler.dump_stats(f"query_profile_{file.name}.prof")
-
-        # Analyze cProfile results
-        stats = pstats.Stats(f"query_profile_{file.name}.prof")
-        stats.sort_stats(pstats.SortKey.CUMULATIVE).print_stats(20)
+def parse_args() -> argparse.Namespace:
+    """Parse command-line arguments."""
+    parser = argparse.ArgumentParser(description="Process 2024 awards data")
+    parser.add_argument(
+        "--filter",
+        type=float,
+        default=None,
+        help="Fraction of filtered data to sample (0 to 1), e.g., 0.1 for 10%. If not provided, use full dataset.",
+    )
+    return parser.parse_args()
 
 
 def main():
+    args = parse_args()
     extract_dir = Path("2024_awards")
 
     zstd_files = list(extract_dir.glob("*.zst"))
@@ -188,21 +160,29 @@ def main():
         f"Processing {len(zstd_files)} zstd files ({total_size_gb:.2f} GB compressed)"
     )
 
-    # Load each zstd file with PyArrow
-    lazy_dfs = [
-        lazy_df
-        for i, zstd_file in enumerate(zstd_files, 1)
-        if (lazy_df := load_zstd_with_pyarrow(zstd_file, i)) is not None
-    ]
+    # Load each zstd file and track row counts
+    lazy_dfs = []
+    total_pre_filtered_rows = 0
+    for i, zstd_file in enumerate(zstd_files, 1):
+        lazy_df, row_count = load_zstd_with_pyarrow(zstd_file, i)
+        if lazy_df is not None:
+            lazy_dfs.append(lazy_df)
+            total_pre_filtered_rows += row_count
 
     if not lazy_dfs:
         logging.error("No valid data to process")
         return
 
-    # Run query
-    result_df = run_query_over_all_data(lazy_dfs)
-    logger.info(f"Sample result:\n{result_df.head(5)}")
+    # Run query with optional sampling
+    try:
+        result_df = run_query_over_all_data(
+            lazy_dfs, total_pre_filtered_rows, sample_fraction=args.filter
+        )
+        logger.info(f"Sample result:\n{result_df.head(5)}")
+    except ValueError:
+        logger.exception("Invalid filter value")
+        return
 
 
 if __name__ == "__main__":
-    profile_main()
+    main()
