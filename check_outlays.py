@@ -1,10 +1,14 @@
-import logging
-from pathlib import Path
 import argparse
+import logging
+import time
+from pathlib import Path
 
 import polars as pl
 import pyarrow.csv as pa_csv
 import zstandard as zstd
+from rich.console import Console
+from rich.panel import Panel
+from rich.table import Table
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(
@@ -70,8 +74,8 @@ def load_zstd_with_pyarrow(
 
 def run_query_over_all_data(
     lazy_dfs: list[pl.LazyFrame], total_rows: int, sample_fraction: float | None = None
-) -> pl.DataFrame:
-    """Execute query over combined LazyFrames."""
+) -> tuple[pl.DataFrame, dict[str, object]]:
+    """Execute query over combined LazyFrames and collect analysis results."""
     combined_lazy_df = pl.concat(lazy_dfs, how="vertical_relaxed")
     logger.info(f"Total pre-filtered dataset size: {total_rows:,} rows")
 
@@ -108,8 +112,25 @@ def run_query_over_all_data(
         result_df = filtered_df
         logger.info("Using entire filtered dataset (no sampling)")
 
-    # Analysis
-    total_rows_result = len(result_df)
+    # Collect analysis results in a dictionary
+    analysis_results: dict[str, object] = {
+        "total_rows": total_rows,
+        "filtered_rows": len(filtered_df),
+        "result_rows": len(result_df),
+    }
+
+    # Calculate total dollar amounts
+    analysis_results["total_outlay"] = float(
+        result_df["outlay_amount"].fill_null(0).sum() or 0.0
+    )
+    analysis_results["total_current_value"] = float(
+        result_df["current_award_value"].fill_null(0).sum() or 0.0
+    )
+    analysis_results["total_potential_value"] = float(
+        result_df["potential_award_value"].fill_null(0).sum() or 0.0
+    )
+
+    # Comparison analysis
     less_than_potential = result_df.filter(
         pl.col("outlay_amount").fill_null(0)
         < pl.col("potential_award_value").fill_null(0)
@@ -118,12 +139,8 @@ def run_query_over_all_data(
         pl.col("outlay_amount").fill_null(0)
         > pl.col("current_award_value").fill_null(0)
     )
-
-    logger.info(f"Total contracts: {total_rows_result:,}")
-    logger.info(f"Outlay < Potential: {len(less_than_potential):,}")
-    logger.info(
-        f"Outlay > Current: {len(exceeds_current):,} ({len(exceeds_current) / total_rows_result * 100:.1f}%)"
-    )
+    analysis_results["less_than_potential_count"] = len(less_than_potential)
+    analysis_results["exceeds_current_count"] = len(exceeds_current)
 
     # Categorize obligations vs potential value
     comparison_df = result_df.select(
@@ -147,23 +164,90 @@ def run_query_over_all_data(
     category_counts = (
         comparison_df.group_by("comparison")
         .agg(pl.len().alias("len"))
-        .with_columns([(pl.col("len") / total_rows_result * 100).alias("percentage")])
+        .with_columns([(pl.col("len") / len(result_df) * 100).alias("percentage")])
     )
 
-    # Log results in desired format
-    logger.info("Obligations Vs Potential Value breakdown:")
-    for row in category_counts.iter_rows(named=True):
-        match row["comparison"]:
-            case "less_than":
-                logger.info(
-                    f"- {row['percentage']:.1f}% had obligations < potential value"
-                )
-            case "equal":
-                logger.info(f"- {row['percentage']:.1f}% were equal")
-            case "greater_than":
-                logger.info(f"- {row['percentage']:.1f}% went over")
+    analysis_results["category_counts"] = category_counts
 
-    return result_df
+    return result_df, analysis_results
+
+
+def print_analysis_results(analysis_results: dict, time_taken: float):
+    """Print all analysis results with formatted output using Rich."""
+    console = Console()
+
+    # Overall summary panel
+    summary_text = (
+        f"[bold]Total pre-filtered dataset size:[/bold] {analysis_results['total_rows']:,} rows\n"
+        f"[bold]Filtered dataset size:[/bold] {analysis_results['filtered_rows']:,} rows "
+        f"({analysis_results['filtered_rows'] / analysis_results['total_rows'] * 100:.1f}% of total)\n"
+        f"[bold]Final result size:[/bold] {analysis_results['result_rows']:,} rows"
+    )
+    console.print(
+        Panel(summary_text, title="[bold green]Final Analysis Results[/bold green]")
+    )
+
+    # Dollar Amounts Table
+    dollar_table = Table(
+        title="Total Dollar Amounts", show_edge=True, header_style="bold cyan"
+    )
+    dollar_table.add_column("Metric", style="dim", width=30)
+    dollar_table.add_column("Amount", justify="right")
+    dollar_table.add_row(
+        "Total Outlay Amount", f"${analysis_results['total_outlay']:,.2f}"
+    )
+    dollar_table.add_row(
+        "Total Current Value", f"${analysis_results['total_current_value']:,.2f}"
+    )
+    dollar_table.add_row(
+        "Total Potential Value", f"${analysis_results['total_potential_value']:,.2f}"
+    )
+    console.print(dollar_table)
+
+    # Contracts Summary Table
+    contract_table = Table(
+        title="Contracts Summary", show_edge=True, header_style="bold cyan"
+    )
+    contract_table.add_column("Metric", style="dim", width=30)
+    contract_table.add_column("Count", justify="right")
+    contract_table.add_row("Total Contracts", f"{analysis_results['result_rows']:,}")
+    contract_table.add_row(
+        "Outlay < Potential", f"{analysis_results['less_than_potential_count']:,}"
+    )
+    contract_table.add_row(
+        "Outlay > Current",
+        f"{analysis_results['exceeds_current_count']:,} ({analysis_results['exceeds_current_count'] / analysis_results['result_rows'] * 100:.1f}%)",
+    )
+    console.print(contract_table)
+
+    # Breakdown Table for Obligations vs Potential Value
+    breakdown_table = Table(
+        title="Obligations Vs Potential Value Breakdown",
+        show_edge=True,
+        header_style="bold cyan",
+    )
+    breakdown_table.add_column("Comparison", style="dim", width=30)
+    breakdown_table.add_column("Percentage", justify="right")
+    for row in analysis_results["category_counts"].iter_rows(named=True):
+        if row["comparison"] == "less_than":
+            label = "Obligations < Potential"
+        elif row["comparison"] == "equal":
+            label = "Obligations = Potential"
+        elif row["comparison"] == "greater_than":
+            label = "Obligations > Potential"
+        breakdown_table.add_row(label, f"{row['percentage']:.1f}%")
+    console.print(breakdown_table)
+
+    # Processing Metrics Panel
+    throughput = analysis_results["total_rows"] / time_taken if time_taken > 0 else 0
+    processing_text = (
+        f"[bold]Total Lines Processed:[/bold] {analysis_results['total_rows']:,} rows\n"
+        f"[bold]Time Taken:[/bold] {time_taken:.2f} seconds\n"
+        f"[bold]Throughput:[/bold] {throughput:,.0f} rows/second"
+    )
+    console.print(
+        Panel(processing_text, title="[bold blue]Processing Metrics[/bold blue]")
+    )
 
 
 def parse_args() -> argparse.Namespace:
@@ -192,6 +276,9 @@ def main():
         f"Processing {len(zstd_files)} zstd files ({total_size_gb:.2f} GB compressed)"
     )
 
+    # Start timing
+    start_time = time.time()
+
     # Load each zstd file and track row counts
     lazy_dfs = []
     total_pre_filtered_rows = 0
@@ -207,10 +294,16 @@ def main():
 
     # Run query with optional sampling
     try:
-        result_df = run_query_over_all_data(
+        result_df, analysis_results = run_query_over_all_data(
             lazy_dfs, total_pre_filtered_rows, sample_fraction=args.filter
         )
-        logger.info(f"Sample result:\n{result_df.head(5)}")
+
+        # End timing
+        end_time = time.time()
+        time_taken = end_time - start_time
+
+        # Print all analysis results at once
+        print_analysis_results(analysis_results, time_taken)
     except ValueError:
         logger.exception("Invalid filter value")
         return
