@@ -1,0 +1,3 @@
+[submodule "src/data_dict"]
+	path = src/data_dict
+	url = git@github.com:peppapig450/usaspending-data-processing.git
