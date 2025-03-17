@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pyarrow as pa
 import pyarrow.csv as pa_csv
-import pyarrow.parquet as pq
+import pyarrow.dataset as ds
 import zstandard as zstd
 
 logger = logging.getLogger(__name__)
@@ -15,61 +15,47 @@ logging.basicConfig(
 )
 
 
-def load_zstd_to_arrow_table(zstd_path: Path, year: str) -> pa.Table | None:
-    """Decompress zstd file, load into Arrow Table, and add 'year' column."""
+def load_zstd_to_batches(zstd_path: Path, year: str) -> list[pa.RecordBatch]:
+    """Stream zstd file and return a list of record batches with year column."""
     try:
         with (
             zstd_path.open("rb") as zstd_file,
             zstd.ZstdDecompressor().stream_reader(zstd_file) as reader,
         ):
-            read_options = pa_csv.ReadOptions(
-                block_size=64 << 20,  # 64MB chunks for efficient memory usage
+            csv_reader = pa_csv.open_csv(
+                reader,
+                read_options=pa_csv.ReadOptions(block_size=64 << 20),  # 64MB batches
+                parse_options=pa_csv.ParseOptions(invalid_row_handler=lambda x: "skip"),
+                convert_options=pa_csv.ConvertOptions(
+                    column_types={
+                        "national_interest_action_code": pa.string(),
+                    },
+                    null_values=["", "NA", "NULL", "NONE"],
+                ),
             )
-            parse_options = pa_csv.ParseOptions(
-                invalid_row_handler=lambda x: "skip"  # Skip malformed rows
-            )
+            logger.debug(f"Schema: {csv_reader.schema}")
 
-            # Read all columns from the CSV
-            table = pa_csv.read_csv(
-                reader, read_options=read_options, parse_options=parse_options
-            )
+            batches = []
+            total_rows = 0
+            for batch in csv_reader:
+                year_array = pa.array([year] * batch.num_rows, type=pa.string())
+                batch_with_year = pa.RecordBatch.from_arrays(
+                    batch.columns + [year_array], names=batch.schema.names + ["year"]
+                )
+                batches.append(batch_with_year)
+                total_rows += batch_with_year.num_rows
 
-        # Add 'year' column
-        year_array = pa.array([year] * len(table), type=pa.string())
-        table = table.append_column("year", year_array)
-
-        logger.info(f"Processed {zstd_path.name} - {len(table):,} rows")
-        return table
+            return batches
     except Exception:
-        logger.exception("Error processing %s", load_zstd_to_arrow_table)
-        return None
-
-
-def process_year_data(
-    input_dir: Path, year: str, writer: pq.ParquetWriter, max_workers: int = 2
-):
-    """Process zstd files in parallel and write to Parquet."""
-    zstd_files = sorted(input_dir.glob("*.zst"))
-    if not zstd_files:
-        logger.error("No zstd files found in %s", input_dir)
+        logger.exception("Error processing %s", zstd_path)
         return []
 
-    total_size_gb = sum(file.stat().st_size / (2 << 30) for file in zstd_files)
-    logger.info(
-        f"Processing {len(zstd_files)} zstd files for {year} ({total_size_gb:.2f} GB compressed)"
-    )
 
-    for file_path in zstd_files:
-        table = load_zstd_to_arrow_table(file_path, year)
-        if table is not None:
-            writer.write_table(table)
-
-
-def create_parquet_from_years(
-    years_dirs: list[tuple[str, Path]], output_parquet: Path, overwrite: bool = True
+def create_partitioned_dataset(
+    years_dirs: list[tuple[str, Path]], output_dir: Path, overwrite: bool = True
 ):
-    """Create a Parquet file from zstd-compressed CSVs with specified row group size."""
-    if output_parquet.is_file() and not overwrite:
+    """Create a partitioned dataset with one Parquet file per directory."""
+    if output_dir.is_file() and not overwrite:
         logger.error(
             "Output file exists and overwrite=False; use overwrite=True or remove file."
         )
@@ -82,50 +68,63 @@ def create_parquet_from_years(
         logger.error("No zstd files found in %s", first_dir)
         return
 
-    first_table = load_zstd_to_arrow_table(first_zstd, first_year)
-    if not first_table:
+    first_batches = load_zstd_to_batches(first_zstd, first_year)
+    if not first_batches:
         logger.error("Failed to load first table for schema")
         return
 
-    schema = first_table.schema # TODO: schema error between two files
+    # Use schema directly from the first batch instead of creating a table
+    schema = first_batches[0].schema
 
-    # Write to Parquet with ZSTD compression
-    writer_options = {
-        "compression": "zstd",
-        "compression_level": 10,
-        "write_statistics": True,
-        "write_batch_size": 64 << 20,  # 64MB
-    }
+    # Create output directory if using existing_data_behavior
+    output_dir.mkdir(parents=True, exist_ok=True)
 
-    logger.info(f"Writing to {output_parquet} with schema: {schema}")
-    with pq.ParquetWriter(output_parquet, schema, **writer_options) as writer:
-        for year, input_dir in years_dirs:
-            if not input_dir.is_dir():
-                logger.warning(
-                    "Directory %s does not exist, skipping %s", input_dir, year
-                )
-                continue
-            process_year_data(input_dir, year, writer, schema)
+    # Process each directory (year)
+    for year, input_dir in years_dirs:
+        if not input_dir.is_dir():
+            logger.warning("Directory %s does not exist, skipping %s", input_dir, year)
+            continue
 
-    file_size_mb = output_parquet.stat().st_size / (2 << 20)
-    logger.info(f"Parquet file written: {file_size_mb:.2f} MB")
+        # Accumulate all batches for the year
+        all_batches = []
+        zstd_files = sorted(input_dir.glob("*.zst"))
+        if not zstd_files:
+            logger.warning("No zstd files found in %s, skipping %s", input_dir, year)
+            continue
+
+        for file_path in zstd_files:
+            batches = load_zstd_to_batches(file_path, year)
+            all_batches.extend(batches)
+
+        if all_batches:
+            # Write all batches for this year as one table
+            ds.write_dataset(
+                data=all_batches,
+                base_dir=output_dir,
+                format="parquet",
+                partitioning=ds.partitioning(schema, field_names=["year"]),
+                existing_data_behavior="overwrite_or_ignore",
+            )
+            logger.info("Wrote %s partition", year)
+        else:
+            logger.warning("No valid data processed for %s", year)
 
 
 def parse_args() -> argparse.Namespace:
     """Parse command-line arguments."""
     parser = argparse.ArgumentParser(
-        description="Convert zstd-compressed CSVs to a Parquet file"
+        description="Convert zstd-compressed CSVs to a partitioned Parquet dataset"
     )
     parser.add_argument(
-        "--output-parquet",
+        "--output-dir",
         type=Path,
-        default=Path("awards_data.parquet"),
-        help="Path to output Parquet file",
+        default=Path("awards_dataset"),
+        help="Path to output Parquet dataset directory",
     )
     parser.add_argument(
         "--overwrite",
         action="store_true",
-        help="Overwrite output file if it exists",
+        help="Overwrite output directory if it exists",
     )
     parser.add_argument(
         "--years",
@@ -140,13 +139,20 @@ def parse_args() -> argparse.Namespace:
         nargs="*",
         help="Optional list of directories corresponding to years; defaults to '<year>_awards' if not provided",
     )
+    parser.add_argument(
+        "--log-level",
+        choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
+        default="INFO",
+        help="Set the logging level",
+    )
     return parser.parse_args()
 
-# TODO: takes a minute+ to process each file: 
-# run on just 2-3 files, and run memory profile and cprofile to figure out why
-# maybe use polars for lazy loading?
+
 def main():
     args = parse_args()
+
+    # Set log level
+    logging.getLogger().setLevel(getattr(logging, args.log_level))
 
     # Construct years_dirs list
     if args.dirs and len(args.dirs) != len(args.years):
@@ -160,8 +166,7 @@ def main():
             directory = Path(f"{year}_awards")
         years_dirs.append((year, directory))
 
-    args.output_parquet.parent.mkdir(parents=True, exist_ok=True)
-    create_parquet_from_years(years_dirs, args.output_parquet, args.overwrite)
+    create_partitioned_dataset(years_dirs, args.output_dir, args.overwrite)
 
 
 if __name__ == "__main__":
