@@ -180,3 +180,4 @@ cython_debug/
 2022_awards/
 2023_awards/
 2024_awards/
+test.py
