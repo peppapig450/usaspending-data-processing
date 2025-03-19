@@ -23,6 +23,7 @@ REQUIRED_COLUMNS = [
     "total_outlayed_amount_for_overall_award",
     "current_total_value_of_award",
     "potential_total_value_of_award",
+    "total_dollars_obligated",
 ]
 
 # Define a mapping from original column names to simpler names
@@ -31,6 +32,7 @@ COLUMN_RENAME_MAP = {
     "total_outlayed_amount_for_overall_award": "outlay_amount",
     "current_total_value_of_award": "current_award_value",
     "potential_total_value_of_award": "potential_award_value",
+    "total_dollars_obligated": "obligated_amount",
 }
 
 
@@ -129,6 +131,9 @@ def run_query_over_all_data(
     analysis_results["total_potential_value"] = float(
         result_df["potential_award_value"].fill_null(0).sum() or 0.0
     )
+    analysis_results["total_obligated"] = float(
+        result_df["obligated_amount"].fill_null(0).sum() or 0.0
+    )
 
     # Comparison analysis
     less_than_potential = result_df.filter(
@@ -143,7 +148,7 @@ def run_query_over_all_data(
     analysis_results["exceeds_current_count"] = len(exceeds_current)
 
     # Categorize obligations vs potential value
-    comparison_df = result_df.select(
+    comparison_df_outlays = result_df.select(
         [
             pl.col("outlay_amount").fill_null(0).alias("obligations"),
             pl.col("potential_award_value").fill_null(0).alias("potential"),
@@ -161,13 +166,37 @@ def run_query_over_all_data(
     )
 
     # Count occurances in each category
-    category_counts = (
-        comparison_df.group_by("comparison")
+    category_counts_outlays = (
+        comparison_df_outlays.group_by("comparison")
         .agg(pl.len().alias("len"))
         .with_columns([(pl.col("len") / len(result_df) * 100).alias("percentage")])
     )
 
-    analysis_results["category_counts"] = category_counts
+    # Obligated vs Potential comparison
+    comparison_df_obligated = result_df.select(
+        [
+            pl.col("obligated_amount").fill_null(0).alias("obligated"),
+            pl.col("potential_award_value").fill_null(0).alias("potential"),
+        ]
+    ).with_columns(
+        [
+            pl.when(pl.col("obligated") < pl.col("potential"))
+            .then(pl.lit("less_than"))
+            .when(pl.col("obligated") == pl.col("potential"))
+            .then(pl.lit("equal"))
+            .otherwise(pl.lit("greater_than"))
+            .alias("comparison")
+        ]
+    )
+
+    category_counts_obligated = (
+        comparison_df_obligated.group_by("comparison")
+        .agg(pl.len().alias("len"))
+        .with_columns([(pl.col("len") / len(result_df) * 100).alias("percentage")])
+    )
+
+    analysis_results["category_counts_outlays"] = category_counts_outlays
+    analysis_results["category_counts_obligated"] = category_counts_obligated
 
     return result_df, analysis_results
 
@@ -202,6 +231,9 @@ def print_analysis_results(analysis_results: dict, time_taken: float):
     dollar_table.add_row(
         "Total Potential Value", f"${analysis_results['total_potential_value']:,.2f}"
     )
+    dollar_table.add_row(
+        "Total Obligated Amount", f"${analysis_results['total_obligated']:,.2f}"
+    )
     console.print(dollar_table)
 
     # Contracts Summary Table
@@ -220,23 +252,41 @@ def print_analysis_results(analysis_results: dict, time_taken: float):
     )
     console.print(contract_table)
 
-    # Breakdown Table for Obligations vs Potential Value
-    breakdown_table = Table(
-        title="Obligations Vs Potential Value Breakdown",
+    # Outlays vs Potential Breakdown Table
+    outlays_breakdown_table = Table(
+        title="Outlays Vs Potential Value Breakdown",
         show_edge=True,
         header_style="bold cyan",
     )
-    breakdown_table.add_column("Comparison", style="dim", width=30)
-    breakdown_table.add_column("Percentage", justify="right")
-    for row in analysis_results["category_counts"].iter_rows(named=True):
+    outlays_breakdown_table.add_column("Comparison", style="dim", width=30)
+    outlays_breakdown_table.add_column("Percentage", justify="right")
+    for row in analysis_results["category_counts_outlays"].iter_rows(named=True):
         if row["comparison"] == "less_than":
-            label = "Obligations < Potential"
+            label = "Outlays < Potential"
         elif row["comparison"] == "equal":
-            label = "Obligations = Potential"
+            label = "Outlays = Potential"
         elif row["comparison"] == "greater_than":
-            label = "Obligations > Potential"
-        breakdown_table.add_row(label, f"{row['percentage']:.1f}%")
-    console.print(breakdown_table)
+            label = "Outlays > Potential"
+        outlays_breakdown_table.add_row(label, f"{row['percentage']:.1f}%")
+    console.print(outlays_breakdown_table)
+
+    # Obligated vs Potential Breakdown Table
+    obligated_breakdown_table = Table(
+        title="Obligated Vs Potential Value Breakdown",
+        show_edge=True,
+        header_style="bold cyan",
+    )
+    obligated_breakdown_table.add_column("Comparison", style="dim", width=30)
+    obligated_breakdown_table.add_column("Percentage", justify="right")
+    for row in analysis_results["category_counts_obligated"].iter_rows(named=True):
+        if row["comparison"] == "less_than":
+            label = "Obligated < Potential"
+        elif row["comparison"] == "equal":
+            label = "Obligated = Potential"
+        elif row["comparison"] == "greater_than":
+            label = "Obligated > Potential"
+        obligated_breakdown_table.add_row(label, f"{row['percentage']:.1f}%")
+    console.print(obligated_breakdown_table)
 
     # Processing Metrics Panel
     throughput = analysis_results["total_rows"] / time_taken if time_taken > 0 else 0
@@ -264,7 +314,8 @@ def parse_args() -> argparse.Namespace:
 
 def main():
     args = parse_args()
-    extract_dir = Path("2024_awards")
+    extract_dir = (Path(__file__).parent / Path("../../data/raw/2024_awards")).resolve()
+    print(extract_dir)
 
     zstd_files = list(extract_dir.glob("*.zst"))
     if not zstd_files:
