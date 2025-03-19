@@ -592,7 +592,7 @@ def parse_args() -> argparse.Namespace:
         "--data-dict",
         type=lambda p: BASE_DIR / p,
         default=(BASE_DIR / Path("../data_dict/data_dicts/data_dict.json")).resolve(),
-        help="Path t othe JSON data dictionary.",
+        help="Path to the JSON data dictionary.",
     )
     parser.add_argument(
         "--log-level",
