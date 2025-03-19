@@ -10,6 +10,7 @@ polars = "==1.25.1"
 psutil = "==7.0.0"
 pyarrow = "==19.0.1"
 zstandard = "==0.23.0"
+rich = "*"
 
 [dev-packages]
 
