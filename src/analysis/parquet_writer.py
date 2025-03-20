@@ -17,377 +17,47 @@ logging.basicConfig(
 )
 
 
-def get_inital_schema() -> pa.Schema:
-    return pa.schema(
-        [
-            ("contract_transaction_unique_key", pa.string()),
-            ("contract_award_unique_key", pa.string()),
-            ("award_id_piid", pa.string()),
-            ("modification_number", pa.string()),
-            ("transaction_number", pa.int64()),
-            ("parent_award_agency_id", pa.string()),
-            ("parent_award_agency_name", pa.string()),
-            ("parent_award_id_piid", pa.string()),
-            ("parent_award_modification_number", pa.string()),
-            ("federal_action_obligation", pa.float64()),
-            ("total_dollars_obligated", pa.float64()),
-            ("total_outlayed_amount_for_overall_award", pa.float64()),
-            ("base_and_exercised_options_value", pa.float64()),
-            ("current_total_value_of_award", pa.float64()),
-            ("base_and_all_options_value", pa.float64()),
-            ("potential_total_value_of_award", pa.float64()),
-            ("disaster_emergency_fund_codes_for_overall_award", pa.string()),
-            (
-                "outlayed_amount_from_COVID-19_supplementals_for_overall_award",
-                pa.float64(),
-            ),
-            (
-                "obligated_amount_from_COVID-19_supplementals_for_overall_award",
-                pa.float64(),
-            ),
-            ("outlayed_amount_from_IIJA_supplemental_for_overall_award", pa.float64()),
-            ("obligated_amount_from_IIJA_supplemental_for_overall_award", pa.float64()),
-            ("action_date", pa.date32()),
-            ("action_date_fiscal_year", pa.int64()),
-            ("period_of_performance_start_date", pa.date32()),
-            ("period_of_performance_current_end_date", pa.date32()),
-            ("period_of_performance_potential_end_date", pa.timestamp("us")),
-            ("ordering_period_end_date", pa.date32()),
-            ("solicitation_date", pa.date32()),
-            ("awarding_agency_code", pa.int64()),
-            ("awarding_agency_name", pa.string()),
-            ("awarding_sub_agency_code", pa.string()),
-            ("awarding_sub_agency_name", pa.string()),
-            ("awarding_office_code", pa.string()),
-            ("awarding_office_name", pa.string()),
-            ("funding_agency_code", pa.int64()),
-            ("funding_agency_name", pa.string()),
-            ("funding_sub_agency_code", pa.string()),
-            ("funding_sub_agency_name", pa.string()),
-            ("funding_office_code", pa.string()),
-            ("funding_office_name", pa.string()),
-            ("treasury_accounts_funding_this_award", pa.string()),
-            ("federal_accounts_funding_this_award", pa.string()),
-            ("object_classes_funding_this_award", pa.string()),
-            ("program_activities_funding_this_award", pa.string()),
-            ("foreign_funding", pa.string()),
-            ("foreign_funding_description", pa.string()),
-            ("sam_exception", pa.int64()),
-            ("sam_exception_description", pa.string()),
-            ("recipient_uei", pa.string()),
-            ("recipient_duns", pa.string()),
-            ("recipient_name", pa.string()),
-            ("recipient_name_raw", pa.string()),
-            ("recipient_doing_business_as_name", pa.string()),
-            ("cage_code", pa.string()),
-            ("recipient_parent_uei", pa.string()),
-            ("recipient_parent_duns", pa.string()),
-            ("recipient_parent_name", pa.string()),
-            ("recipient_parent_name_raw", pa.string()),
-            ("recipient_country_code", pa.string()),
-            ("recipient_country_name", pa.string()),
-            ("recipient_address_line_1", pa.string()),
-            ("recipient_address_line_2", pa.string()),
-            ("recipient_city_name", pa.string()),
-            ("prime_award_transaction_recipient_county_fips_code", pa.int64()),
-            ("recipient_county_name", pa.string()),
-            ("prime_award_transaction_recipient_state_fips_code", pa.int64()),
-            ("recipient_state_code", pa.string()),
-            ("recipient_state_name", pa.string()),
-            ("recipient_zip_4_code", pa.string()),
-            ("prime_award_transaction_recipient_cd_original", pa.string()),
-            ("prime_award_transaction_recipient_cd_current", pa.string()),
-            ("recipient_phone_number", pa.string()),
-            ("recipient_fax_number", pa.string()),
-            ("primary_place_of_performance_country_code", pa.string()),
-            ("primary_place_of_performance_country_name", pa.string()),
-            ("primary_place_of_performance_city_name", pa.string()),
-            (
-                "prime_award_transaction_place_of_performance_county_fips_code",
-                pa.int64(),
-            ),
-            ("primary_place_of_performance_county_name", pa.string()),
-            (
-                "prime_award_transaction_place_of_performance_state_fips_code",
-                pa.int64(),
-            ),
-            ("primary_place_of_performance_state_code", pa.string()),
-            ("primary_place_of_performance_state_name", pa.string()),
-            ("primary_place_of_performance_zip_4", pa.string()),
-            ("prime_award_transaction_place_of_performance_cd_original", pa.string()),
-            ("prime_award_transaction_place_of_performance_cd_current", pa.string()),
-            ("award_or_idv_flag", pa.string()),
-            ("award_type_code", pa.string()),
-            ("award_type", pa.string()),
-            ("idv_type_code", pa.string()),
-            ("idv_type", pa.string()),
-            ("multiple_or_single_award_idv_code", pa.string()),
-            ("multiple_or_single_award_idv", pa.string()),
-            ("type_of_idc_code", pa.string()),
-            ("type_of_idc", pa.string()),
-            ("type_of_contract_pricing_code", pa.string()),
-            ("type_of_contract_pricing", pa.string()),
-            ("transaction_description", pa.string()),
-            ("prime_award_base_transaction_description", pa.string()),
-            ("action_type_code", pa.string()),
-            ("action_type", pa.string()),
-            ("solicitation_identifier", pa.string()),
-            ("number_of_actions", pa.int64()),
-            ("inherently_governmental_functions", pa.string()),
-            ("inherently_governmental_functions_description", pa.string()),
-            ("product_or_service_code", pa.string()),
-            ("product_or_service_code_description", pa.string()),
-            ("contract_bundling_code", pa.string()),
-            ("contract_bundling", pa.string()),
-            ("dod_claimant_program_code", pa.string()),
-            ("dod_claimant_program_description", pa.string()),
-            ("naics_code", pa.int64()),
-            ("naics_description", pa.string()),
-            ("recovered_materials_sustainability_code", pa.string()),
-            ("recovered_materials_sustainability", pa.string()),
-            ("domestic_or_foreign_entity_code", pa.string()),
-            ("domestic_or_foreign_entity", pa.string()),
-            ("dod_acquisition_program_code", pa.string()),
-            ("dod_acquisition_program_description", pa.string()),
-            ("information_technology_commercial_item_category_code", pa.string()),
-            ("information_technology_commercial_item_category", pa.string()),
-            ("epa_designated_product_code", pa.string()),
-            ("epa_designated_product", pa.string()),
-            ("country_of_product_or_service_origin_code", pa.string()),
-            ("country_of_product_or_service_origin", pa.string()),
-            ("place_of_manufacture_code", pa.string()),
-            ("place_of_manufacture", pa.string()),
-            ("subcontracting_plan_code", pa.string()),
-            ("subcontracting_plan", pa.string()),
-            ("extent_competed_code", pa.string()),
-            ("extent_competed", pa.string()),
-            ("solicitation_procedures_code", pa.string()),
-            ("solicitation_procedures", pa.string()),
-            ("type_of_set_aside_code", pa.string()),
-            ("type_of_set_aside", pa.string()),
-            ("evaluated_preference_code", pa.string()),
-            ("evaluated_preference", pa.string()),
-            ("research_code", pa.string()),
-            ("research", pa.string()),
-            ("fair_opportunity_limited_sources_code", pa.string()),
-            ("fair_opportunity_limited_sources", pa.string()),
-            ("other_than_full_and_open_competition_code", pa.string()),
-            ("other_than_full_and_open_competition", pa.string()),
-            ("number_of_offers_received", pa.int64()),
-            ("commercial_item_acquisition_procedures_code", pa.string()),
-            ("commercial_item_acquisition_procedures", pa.string()),
-            ("small_business_competitiveness_demonstration_program", pa.string()),
-            ("simplified_procedures_for_certain_commercial_items_code", pa.string()),
-            ("simplified_procedures_for_certain_commercial_items", pa.string()),
-            ("a76_fair_act_action_code", pa.string()),
-            ("a76_fair_act_action", pa.string()),
-            ("fed_biz_opps_code", pa.string()),
-            ("fed_biz_opps", pa.string()),
-            ("local_area_set_aside_code", pa.string()),
-            ("local_area_set_aside", pa.string()),
-            ("price_evaluation_adjustment_preference_percent_difference", pa.float64()),
-            ("clinger_cohen_act_planning_code", pa.string()),
-            ("clinger_cohen_act_planning", pa.string()),
-            ("materials_supplies_articles_equipment_code", pa.string()),
-            ("materials_supplies_articles_equipment", pa.string()),
-            ("labor_standards_code", pa.string()),
-            ("labor_standards", pa.string()),
-            ("construction_wage_rate_requirements_code", pa.string()),
-            ("construction_wage_rate_requirements", pa.string()),
-            ("interagency_contracting_authority_code", pa.string()),
-            ("interagency_contracting_authority", pa.string()),
-            ("other_statutory_authority", pa.string()),
-            ("program_acronym", pa.string()),
-            ("parent_award_type_code", pa.string()),
-            ("parent_award_type", pa.string()),
-            ("parent_award_single_or_multiple_code", pa.string()),
-            ("parent_award_single_or_multiple", pa.string()),
-            ("major_program", pa.string()),
-            ("national_interest_action_code", pa.string()),
-            ("national_interest_action", pa.string()),
-            ("cost_or_pricing_data_code", pa.string()),
-            ("cost_or_pricing_data", pa.string()),
-            ("cost_accounting_standards_clause_code", pa.string()),
-            ("cost_accounting_standards_clause", pa.string()),
-            ("government_furnished_property_code", pa.string()),
-            ("government_furnished_property", pa.string()),
-            ("sea_transportation_code", pa.string()),
-            ("sea_transportation", pa.string()),
-            ("undefinitized_action_code", pa.string()),
-            ("undefinitized_action", pa.string()),
-            ("consolidated_contract_code", pa.string()),
-            ("consolidated_contract", pa.string()),
-            ("performance_based_service_acquisition_code", pa.string()),
-            ("performance_based_service_acquisition", pa.string()),
-            ("multi_year_contract_code", pa.string()),
-            ("multi_year_contract", pa.string()),
-            ("contract_financing_code", pa.string()),
-            ("contract_financing", pa.string()),
-            ("purchase_card_as_payment_method_code", pa.string()),
-            ("purchase_card_as_payment_method", pa.string()),
-            ("contingency_humanitarian_or_peacekeeping_operation_code", pa.string()),
-            ("contingency_humanitarian_or_peacekeeping_operation", pa.string()),
-            ("alaskan_native_corporation_owned_firm", pa.string()),
-            ("american_indian_owned_business", pa.string()),
-            ("indian_tribe_federally_recognized", pa.string()),
-            ("native_hawaiian_organization_owned_firm", pa.string()),
-            ("tribally_owned_firm", pa.string()),
-            ("veteran_owned_business", pa.string()),
-            ("service_disabled_veteran_owned_business", pa.string()),
-            ("woman_owned_business", pa.string()),
-            ("women_owned_small_business", pa.string()),
-            ("economically_disadvantaged_women_owned_small_business", pa.string()),
-            ("joint_venture_women_owned_small_business", pa.string()),
-            ("joint_venture_economic_disadvantaged_women_owned_small_bus", pa.string()),
-            ("minority_owned_business", pa.string()),
-            ("subcontinent_asian_asian_indian_american_owned_business", pa.string()),
-            ("asian_pacific_american_owned_business", pa.string()),
-            ("black_american_owned_business", pa.string()),
-            ("hispanic_american_owned_business", pa.string()),
-            ("native_american_owned_business", pa.string()),
-            ("other_minority_owned_business", pa.string()),
-            ("contracting_officers_determination_of_business_size", pa.string()),
-            ("contracting_officers_determination_of_business_size_code", pa.string()),
-            ("emerging_small_business", pa.string()),
-            ("community_developed_corporation_owned_firm", pa.string()),
-            ("labor_surplus_area_firm", pa.string()),
-            ("us_federal_government", pa.string()),
-            ("federally_funded_research_and_development_corp", pa.string()),
-            ("federal_agency", pa.string()),
-            ("us_state_government", pa.string()),
-            ("us_local_government", pa.string()),
-            ("city_local_government", pa.string()),
-            ("county_local_government", pa.string()),
-            ("inter_municipal_local_government", pa.string()),
-            ("local_government_owned", pa.string()),
-            ("municipality_local_government", pa.string()),
-            ("school_district_local_government", pa.string()),
-            ("township_local_government", pa.string()),
-            ("us_tribal_government", pa.string()),
-            ("foreign_government", pa.string()),
-            ("organizational_type", pa.string()),
-            ("corporate_entity_not_tax_exempt", pa.string()),
-            ("corporate_entity_tax_exempt", pa.string()),
-            ("partnership_or_limited_liability_partnership", pa.string()),
-            ("sole_proprietorship", pa.string()),
-            ("small_agricultural_cooperative", pa.string()),
-            ("international_organization", pa.string()),
-            ("us_government_entity", pa.string()),
-            ("community_development_corporation", pa.string()),
-            ("domestic_shelter", pa.string()),
-            ("educational_institution", pa.string()),
-            ("foundation", pa.string()),
-            ("hospital_flag", pa.string()),
-            ("manufacturer_of_goods", pa.string()),
-            ("veterinary_hospital", pa.string()),
-            ("hispanic_servicing_institution", pa.string()),
-            ("receives_contracts", pa.string()),
-            ("receives_financial_assistance", pa.string()),
-            ("receives_contracts_and_financial_assistance", pa.string()),
-            ("airport_authority", pa.string()),
-            ("council_of_governments", pa.string()),
-            ("housing_authorities_public_tribal", pa.string()),
-            ("interstate_entity", pa.string()),
-            ("planning_commission", pa.string()),
-            ("port_authority", pa.string()),
-            ("transit_authority", pa.string()),
-            ("subchapter_scorporation", pa.string()),
-            ("limited_liability_corporation", pa.string()),
-            ("foreign_owned", pa.string()),
-            ("for_profit_organization", pa.string()),
-            ("nonprofit_organization", pa.string()),
-            ("other_not_for_profit_organization", pa.string()),
-            ("the_ability_one_program", pa.string()),
-            ("private_university_or_college", pa.string()),
-            ("state_controlled_institution_of_higher_learning", pa.string()),
-            ("1862_land_grant_college", pa.string()),
-            ("1890_land_grant_college", pa.string()),
-            ("1994_land_grant_college", pa.string()),
-            ("minority_institution", pa.string()),
-            ("historically_black_college", pa.string()),
-            ("tribal_college", pa.string()),
-            ("alaskan_native_servicing_institution", pa.string()),
-            ("native_hawaiian_servicing_institution", pa.string()),
-            ("school_of_forestry", pa.string()),
-            ("veterinary_college", pa.string()),
-            ("dot_certified_disadvantage", pa.string()),
-            ("self_certified_small_disadvantaged_business", pa.string()),
-            ("small_disadvantaged_business", pa.string()),
-            ("c8a_program_participant", pa.string()),
-            ("historically_underutilized_business_zone_hubzone_firm", pa.string()),
-            ("sba_certified_8a_joint_venture", pa.string()),
-            ("highly_compensated_officer_1_name", pa.string()),
-            ("highly_compensated_officer_1_amount", pa.float64()),
-            ("highly_compensated_officer_2_name", pa.string()),
-            ("highly_compensated_officer_2_amount", pa.float64()),
-            ("highly_compensated_officer_3_name", pa.string()),
-            ("highly_compensated_officer_3_amount", pa.float64()),
-            ("highly_compensated_officer_4_name", pa.string()),
-            ("highly_compensated_officer_4_amount", pa.float64()),
-            ("highly_compensated_officer_5_name", pa.string()),
-            ("highly_compensated_officer_5_amount", pa.float64()),
-            ("usaspending_permalink", pa.string()),
-            ("initial_report_date", pa.date32()),
-            ("last_modified_date", pa.date32()),
-        ]
-    )
-
-
-def get_new_type(
-    field: pa.Field, data_dict: dict[str, Any], bool_patterns: set[frozenset[str]]
-) -> pa.DataType:
-    """
-    Determine the new PyArrow data type for a field based on the data dictionary.
-
-    Args:
-        field: The original PyArrow field.
-        data_dict: The loaded data dictionary.
-        bool_patterns: Set of boolean key patterns.
-
-    Returns:
-        The updated PyArrow data type.
-    """
-    if field.name not in data_dict or not isinstance(data_dict[field.name], dict):
-        return field.type
-
-    dd_entry: dict[str, Any] = data_dict[field.name]
-    keys = set(dd_entry)
-
-    if keys in bool_patterns:
-        return pa.bool_()
-    elif "reference" not in dd_entry and all(
-        isinstance(k, str) and isinstance(v, str) for k, v in dd_entry.items()
-    ):
-        return pa.dictionary(pa.int32(), pa.string())
-    return field.type
-
-
-def load_schema_with_data_dict(
+def get_true_false_from_data_dict(
     data_dict_path: Path,
-) -> tuple[pa.Schema, list[str], list[str]]:
+) -> tuple[list[str], list[str]]:
     """
-    Generate a PyArrow schema and true/false values from a data dictionary for CSV loading.
+    Extract true and false values from a JSON data dictionary for CSV parsing.
 
-    This function enhances an initial schema by identifying boolean and dictionary-encoded columns
-    based on a JSON data dictionary. It's optimized for clarity and robustness in a high-throughput
-    data pipeline processing structured CSV files.
+    This function processes a JSON data dictionary to identify values representing
+    True and False, based on common boolean patterns (e.g., 'T'/'F', 'Y'/'N').
 
-    Args:
-        data_dict_path: Path to the JSON data dictionary file.
+    Parameters
+    ----------
+    data_dict_path : pathlib.Path
+        Path to the JSON file containing the data dictionary. The dictionary should map
+        field names to nested dictionaries of possible values (e.g., {"field": {"T": "True", "F": "False"}}).
 
-    Returns:
-        Tuple containing:
-            - improved_schema (pa.Schema): Enhanced schema with updated column types.
-            - true_values (List[str]): Values interpreted as True for boolean columns.
-            - false_values (List[str]): Values interpreted as False for boolean columns.
+    Returns
+    -------
+    tuple[list[str], list[str]]
+        A tuple containing:
+        - true_values : list[str]
+            List of strings interpreted as True in boolean columns.
+        - false_values : list[str]
+            List of strings interpreted as False in boolean columns.
 
-    Raises:
-        json.JSONDecodeError: If the data dictionary is malformed.
-        FileNotFoundError: If the data dictionary file is missing.
-        PermissionError: If access to the file is denied.
+    Raises
+    ------
+    json.JSONDecodeError
+        If the JSON file is malformed.
+    FileNotFoundError
+        If the file at `data_dict_path` does not exist.
+    PermissionError
+        If access to the file is denied.
+    Exception
+        For unexpected errors during file loading, with detailed logging.
+
+    Examples
+    --------
+    >>> true_vals, false_vals = extract_boolean_values_from_dict(Path("data_dict.json"))
+    >>> print(true_vals, false_vals)
+    ['Y', 'T', 'YES', 'True'], ['N', 'F', 'NO', 'False']
     """
-    schema = get_inital_schema()
-
     # Load data dictionary:
     try:
         data_dict: dict[str, Any] = json.loads(
@@ -396,7 +66,7 @@ def load_schema_with_data_dict(
         logger.debug("Loaded data dictionary from %s", data_dict_path)
     except (json.JSONDecodeError, FileNotFoundError, PermissionError):
         logger.exception("Failed to load data dictionary from %s", data_dict_path)
-        return schema, [], []
+        return [], []
     except Exception:
         logger.critical(
             "Unexpected error loading data dictionary from %s",
@@ -411,7 +81,6 @@ def load_schema_with_data_dict(
         frozenset({"T", "F"}): ("T", "F"),
         frozenset({"Y", "N"}): ("Y", "N"),
     }
-    bool_pattern_keys = set(BOOL_PATTERNS)
 
     # Extract true/false values efficiently
     true_values: set[str] = set()
@@ -433,19 +102,6 @@ def load_schema_with_data_dict(
                 if key in field_values
             )
 
-    # Enhance schema with optimized type determination
-    new_fields = [
-        pa.field(
-            field.name,
-            get_new_type(field, data_dict, bool_pattern_keys),
-            nullable=field.nullable,
-            metadata=field.metadata,
-        )
-        for field in schema
-    ]
-    improved_schema = pa.schema(new_fields)
-    logger.debug("Schema enhanced based on data dictionary")
-
     # Define base true/false values for CSV parsing
     BASE_TRUE_VALUES = frozenset({"y", "Y", "T", "t", "YES", "Yes", "True", "TRUE"})
     BASE_FALSE_VALUES = frozenset({"n", "N", "f", "F", "NO", "No", "False", "FALSE"})
@@ -455,12 +111,156 @@ def load_schema_with_data_dict(
     combined_false_values = list(set(BASE_FALSE_VALUES) | false_values)
 
     logger.debug(
-        "Schema loaded with %d fields; true_values: %d, false_values: %d",
-        len(new_fields),
+        "Found %d True values and %d False values from data dict",
         len(combined_true_values),
         len(combined_false_values),
     )
-    return improved_schema, combined_true_values, combined_false_values
+    return combined_true_values, combined_false_values
+
+
+def load_schema_from_json(file_path: str | Path = "schema.json") -> pa.Schema:
+    """
+    Load a PyArrow schema from a JSON file.
+
+    Args:
+        file_path: Path to the JSON file containing the schema. Defaults to 'schema.json'.
+                  Can be a string or Path object.
+
+    Returns:
+        A PyArrow schema object constructed from the JSON data.
+
+    Raises:
+        FileNotFoundError: If the specified file does not exist.
+        ValueError: If the JSON structure is invalid or contains unsupported types.
+        json.JSONDecodeError: If the file contains invalid JSON.
+    """
+    schema_path = Path(file_path)
+
+    # Open and read the JSON schema
+    try:
+        schema_json = json.loads(schema_path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        raise FileNotFoundError(f"Schema file '{schema_path}' not found.")
+    except json.JSONDecodeError as e:
+        raise ValueError(f"Invalid JSON in schema file: {e}")
+
+    # Ensure the JSON has a 'fields' key, basic sanity check
+    if not isinstance(schema_json, dict) or "fields" not in schema_json:
+        raise ValueError("JSON schema must be a dictionary containing a 'fields' key.")
+
+    # Map JSON type strings to PyArrow types
+    def _get_pa_type(type_str: str) -> pa.DataType:
+        type_mapping: dict[str, pa.DataType] = {
+            # Standard types
+            "string": pa.string(),
+            "int8": pa.int8(),
+            "int16": pa.int16(),
+            "int32": pa.int32(),
+            "int64": pa.int64(),
+            "uint8": pa.uint8(),
+            "uint16": pa.uint16(),
+            "uint32": pa.uint32(),
+            "uint64": pa.uint64(),
+            "float16": pa.float16(),
+            "float32": pa.float32(),
+            "float": pa.float32(),  # Alias
+            "float64": pa.float64(),
+            "double": pa.float64(),  # Added 'double' as alias for float64
+            "bool": pa.bool_(),
+            "boolean": pa.bool_(),  # Alias
+            # Date and time types
+            "date32[day]": pa.date32(),
+            "date64[ms]": pa.date64(),
+            "timestamp[s]": pa.timestamp("s"),
+            "timestamp[ms]": pa.timestamp("ms"),
+            "timestamp[us]": pa.timestamp("us"),
+            "timestamp[ns]": pa.timestamp("ns"),
+            # Binary types
+            "binary": pa.binary(),
+            "large_binary": pa.large_binary(),
+            "large_string": pa.large_string(),
+        }
+        if type_str not in type_mapping:
+            raise ValueError(f"Unsupported type: '{type_str}'")
+        return type_mapping[type_str]
+
+    # Process fields with helper function
+    def _process_field(field_def: dict[str, Any]) -> pa.Field:
+        name = field_def.get("name")
+        if not name:
+            raise ValueError(f"Field definition missing 'name': {field_def}")
+
+        nullable = field_def.get("nullable", True)
+        metadata = field_def.get("metadata")
+        field_type = field_def.get("type")
+
+        if not field_type:
+            raise ValueError(f"Field '{name}' is missing 'type' definition")
+
+        match field_type:
+            case str():
+                # Simple type case
+                pa_type = _get_pa_type(field_type)
+
+            case dict() if "type" in field_type:
+                match field_type["type"]:
+                    case "dictionary":
+                        value_type_str = field_type.get("valueType")
+                        index_type_str = field_type.get("indexType", "int32")
+                        ordered = field_type.get("ordered", False)
+
+                        if not value_type_str:
+                            raise ValueError(
+                                f"Dictionary field '{name}' missing 'valueType'"
+                            )
+
+                        value_type = _get_pa_type(value_type_str)
+                        index_type = _get_pa_type(index_type_str)
+                        pa_type = pa.dictionary(index_type, value_type, ordered=ordered)  # type: ignore
+
+                    case "list":
+                        value_type_str = field_type.get("valueType")
+                        if not value_type_str:
+                            raise ValueError(f"List field '{name}' missing 'valueType'")
+
+                        value_type = _get_pa_type(value_type_str)
+                        pa_type = pa.list_(value_type)
+
+                    case "struct":
+                        subfields = field_type.get("fields", [])
+                        if not subfields:
+                            raise ValueError(
+                                f"Struct field '{name}' has no subfields defined"
+                            )
+
+                        struct_fields = [
+                            _process_field(subfield) for subfield in subfields
+                        ]
+                        pa_type = pa.struct(struct_fields)
+
+                    case unknown_type:
+                        raise ValueError(
+                            f"Unsupported complex type '{unknown_type}' for field '{name}'"
+                        )
+            case _:
+                raise ValueError(
+                    f"Invalid type definition for field '{name}': {field_type}"
+                )
+
+        # Create field with metadata if provided
+        meta_dict = {k: str(v) for k, v in metadata.items()} if metadata else None
+        return pa.field(name, pa_type, nullable=nullable, metadata=meta_dict)
+
+    # Map each field definition to a PyArrow field
+    fields = [_process_field(field) for field in schema_json["fields"]]
+
+    # Return the constructed PyArrow schema with any top-level metadata
+    metadata = schema_json.get("metadata")
+    meta_dict: dict[bytes | str, bytes | str] | None = (
+        {k: str(v) for k, v in metadata.items()} if metadata else None
+    )
+
+    return pa.schema(fields, metadata=meta_dict)
 
 
 def load_zstd_to_batches(
@@ -548,7 +348,8 @@ def create_partitioned_dataset(
                 base_dir=output_dir,
                 format="parquet",
                 partitioning=ds.partitioning(
-                    pa.schema([schema.field("year")]), flavor="hive" #type: ignore
+                    pa.schema([schema.field("year")]),
+                    flavor="hive",  # type: ignore
                 ),
                 existing_data_behavior="overwrite_or_ignore",
             )
@@ -605,6 +406,7 @@ def parse_args() -> argparse.Namespace:
 
 def main():
     args = parse_args()
+    BASE_DIR = Path(__file__).parent.parent.parent
 
     # Set log level
     logging.getLogger().setLevel(getattr(logging, args.log_level))
@@ -618,15 +420,16 @@ def main():
         directory = (
             args.dirs[i]
             if args.dirs and i < len(args.dirs)
-            else (
-                Path(__file__).parent / Path(f"../../data/raw/{year}_awards")
-            ).resolve()
+            else (BASE_DIR / "data" / "raw" / f"{year}_awards")
         )
         years_dirs.append((year, directory))
 
     # Load schema and conversion options
-    improved_schema, combined_true_values, combined_false_values = (
-        load_schema_with_data_dict(args.data_dict)
+    schema_file = BASE_DIR / "data" / "schema" / "contract_schema.json"
+    improved_schema = load_schema_from_json(schema_file)
+
+    combined_true_values, combined_false_values = get_true_false_from_data_dict(
+        args.data_dict
     )
     convert_opts = pa_csv.ConvertOptions(
         column_types=improved_schema,
