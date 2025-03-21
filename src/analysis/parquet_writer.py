@@ -5,6 +5,8 @@ from pathlib import Path
 import pyarrow as pa
 import pyarrow.csv as pa_csv
 import pyarrow.dataset as ds
+import pyarrow.parquet as pq
+from collections.abc import Generator
 from typing import Any
 import json
 import zstandard as zstd
@@ -15,6 +17,20 @@ logging.basicConfig(
     format="%(asctime)s - %(levelname)s - %(message)s",
     datefmt="%Y-%m-%d %H:%M:%S",
 )
+
+
+def generate_case_variations(base_value: str) -> set[str]:
+    """
+    Generate common capitalization variations for a given string.
+
+    Args:
+        base_value (str): The base string to vary (e.g., 'true').
+
+    Returns:
+        set[str]: A set of case variations (e.g., {'true', 'True', 'TRUE'}).
+    """
+    variations = {base_value.lower(), base_value.upper(), base_value.capitalize()}
+    return variations
 
 
 def get_true_false_from_data_dict(
@@ -54,7 +70,7 @@ def get_true_false_from_data_dict(
 
     Examples
     --------
-    >>> true_vals, false_vals = extract_boolean_values_from_dict(Path("data_dict.json"))
+    >>> true_vals, false_vals = get_true_false_from_data_dict(Path("data_dict.json"))
     >>> print(true_vals, false_vals)
     ['Y', 'T', 'YES', 'True'], ['N', 'F', 'NO', 'False']
     """
@@ -76,39 +92,46 @@ def get_true_false_from_data_dict(
         )
         raise
 
+    # Define canonical base true/false values (lowercase)
+    BASE_TRUE_VALUES = {"true", "yes", "t", "y", "on"}
+    BASE_FALSE_VALUES = {"false", "no", "f", "n", "off"}
+
+    # Generate all case variations for base values
+    true_values = set().union(
+        *(generate_case_variations(val) for val in BASE_TRUE_VALUES)
+    )
+    false_values = set().union(
+        *(generate_case_variations(val) for val in BASE_FALSE_VALUES)
+    )
+
     # Define boolean patterns as a dictionary mapping patterns to true/false keys
     BOOL_PATTERNS = {
         frozenset({"T", "F"}): ("T", "F"),
         frozenset({"Y", "N"}): ("Y", "N"),
     }
 
-    # Extract true/false values efficiently
-    true_values: set[str] = set()
-    false_values: set[str] = set()
-
     for field_values in data_dict.values():
         if not isinstance(field_values, dict):
             continue
-        keys = frozenset(field_values)
-        if keys in BOOL_PATTERNS:
-            true_values.update(
-                str(field_values.get(key, "")).upper()
-                for key in ("T", "Y")
-                if key in field_values
-            )
-            false_values.update(
-                str(field_values.get(key, "")).upper()
-                for key in ("F", "N")
-                if key in field_values
-            )
 
-    # Define base true/false values for CSV parsing
-    BASE_TRUE_VALUES = frozenset({"y", "Y", "T", "t", "YES", "Yes", "True", "TRUE"})
-    BASE_FALSE_VALUES = frozenset({"n", "N", "f", "F", "NO", "No", "False", "FALSE"})
+        keys_set = frozenset(field_values)
+
+        # Check if the field's keys match any of our boolean patterns
+        for pattern, (true_key, false_key) in BOOL_PATTERNS.items():
+            if keys_set.issuperset(pattern):
+                # Extract and process true values
+                if true_key in field_values:
+                    val = str(field_values[true_key]).strip()
+                    true_values.update(generate_case_variations(val))
+
+                # Extract and process false valuse
+                if false_key in field_values:
+                    val = str(field_values[false_key]).strip()
+                    false_values.update(generate_case_variations(val))
 
     # Combine with extracted values, preserving case sensitivity
-    combined_true_values = list(set(BASE_TRUE_VALUES) | true_values)
-    combined_false_values = list(set(BASE_FALSE_VALUES) | false_values)
+    combined_true_values = list(true_values)
+    combined_false_values = list(false_values)
 
     logger.debug(
         "Found %d True values and %d False values from data dict",
@@ -263,13 +286,31 @@ def load_schema_from_json(file_path: str | Path = "schema.json") -> pa.Schema:
     return pa.schema(fields, metadata=meta_dict)
 
 
+def empty_generator() -> Generator[pa.RecordBatch, None, None]:
+    """Yield an empty generator"""
+    yield from ()
+
+
 def load_zstd_to_batches(
     zstd_path: Path,
     year: str,
     convert_opts: pa_csv.ConvertOptions,
     parse_opts: pa_csv.ParseOptions,
-) -> tuple[list[pa.RecordBatch], pa.Schema]:
-    """Stream zstd file and return a list of record batches with year column."""
+) -> tuple[Generator[pa.RecordBatch, None, None], pa.Schema]:
+    """
+    Stream zstd file and yield record batches with year column.
+
+    Args:
+        zstd_path: Path to the compressed zstd file
+        year: Year to add as a column
+        convert_opts: PyArrow CSV conversion options
+        parse_opts: PyArrow CSV parsing options
+
+    Returns:
+        A tuple containing:
+        - Generator yielding PyArrow RecordBatch objects
+        - PyArrow Schema of the batches
+    """
     try:
         with (
             zstd_path.open("rb") as zstd_file,
@@ -284,21 +325,31 @@ def load_zstd_to_batches(
             logger.debug("Schema: %s", csv_reader.schema)
 
             # Extend the schema to include the "year" field
-            schema_with_year = csv_reader.schema.append(pa.field("year", pa.string()))
+            schema = csv_reader.schema
+            schema_with_year = schema.append(pa.field("year", pa.string()))
 
-            batches = []
-            for batch in csv_reader:
-                year_array = pa.array([year] * batch.num_rows, type=pa.string())
-                batch_with_year = pa.RecordBatch.from_arrays(
-                    batch.columns + [year_array],
-                    names=schema_with_year.names,
-                )
-                batches.append(batch_with_year)
+            def _batch_generator() -> Generator[pa.RecordBatch, None, None]:
+                for batch in csv_reader:
+                    year_array = pa.array([year] * batch.num_rows, type=pa.string())
+                    batch_with_year = pa.RecordBatch.from_arrays(
+                        batch.columns + [year_array],
+                        names=schema_with_year.names,
+                    )
+                    yield batch_with_year
 
-            return batches, schema_with_year
+            return _batch_generator(), schema_with_year
+
+    except zstd.ZstdError:
+        logger.exception(
+            "Zstd decompression error processing %s", zstd_path, stack_info=True
+        )
+        return empty_generator(), pa.schema([])
+    except IOError:
+        logger.exception("IO error processing %s", zstd_path)
+        return empty_generator(), pa.schema([])
     except Exception:
-        logger.exception("Error processing %s", zstd_path)
-        return [], csv_reader.schema if "csv_reader" in locals() else pa.schema([])
+        logger.exception("Unexpected error processing %s", zstd_path)
+        return empty_generator(), pa.schema([])
 
 
 def create_partitioned_dataset(
@@ -318,40 +369,48 @@ def create_partitioned_dataset(
     # Create output directory if using existing_data_behavior
     output_dir.mkdir(parents=True, exist_ok=True)
 
+    # Parquet file options for dataset
+    file_options = ds.ParquetFileFormat(
+        read_options=None, default_fragment_scan_options=None #type: ignore
+    ).make_write_options(
+        compression="zstd", compression_level=9, data_page_size=64 << 20 #type: ignore
+    )  # type: ignore
+
     # Process each directory (year)
     for year, input_dir in years_dirs:
         if not input_dir.is_dir():
             logger.warning("Directory %s does not exist, skipping %s", input_dir, year)
             continue
 
-        # Accumulate all batches for the year
-        all_batches = []
-        schema = None
         zstd_files = sorted(input_dir.glob("*.zst"))
         if not zstd_files:
             logger.warning("No zstd files found in %s, skipping %s", input_dir, year)
             continue
 
         for file_path in zstd_files:
-            batches, file_schema = load_zstd_to_batches(
+            file_size = file_path.stat().st_size
+            logger.info("Processing file %s with size %d bytes", file_path, file_size)
+            batch_iter, file_schema = load_zstd_to_batches(
                 file_path, year, convert_opts, parse_opts
             )
-            if batches:
-                all_batches.extend(batches)
-                if schema is None:
-                    schema = file_schema
-
-        if all_batches:
+            # Check if "year" is in the schema
+            if "year" not in file_schema.names:
+                logger.warning(
+                    "Skipping file %s due to missing 'year' field in schema", file_path
+                )
+                continue
             # Write all batches for this year as one table
             ds.write_dataset(
-                data=all_batches,
+                data=batch_iter,
                 base_dir=output_dir,
+                schema=file_schema,
                 format="parquet",
                 partitioning=ds.partitioning(
-                    pa.schema([schema.field("year")]),
+                    pa.schema([file_schema.field("year")]),
                     flavor="hive",  # type: ignore
                 ),
                 existing_data_behavior="overwrite_or_ignore",
+                file_options=file_options,
             )
             logger.info("Wrote %s partition", year)
         else:
@@ -380,7 +439,7 @@ def parse_args() -> argparse.Namespace:
         "--years",
         type=str,
         nargs="+",
-        required=True,
+        # required=True,
         help="List of years to process (e.g., '2022 2023 2024')",
     )
     parser.add_argument(
@@ -408,9 +467,6 @@ def main():
     args = parse_args()
     BASE_DIR = Path(__file__).parent.parent.parent
 
-    # Set log level
-    logging.getLogger().setLevel(getattr(logging, args.log_level))
-
     # Construct years_dirs list
     if args.dirs and len(args.dirs) != len(args.years):
         raise ValueError("Number of directories must match number of years if provided")
@@ -424,12 +480,20 @@ def main():
         )
         years_dirs.append((year, directory))
 
+    # Set log level
+    logging.getLogger().setLevel(getattr(logging, args.log_level))
+
     # Load schema and conversion options
-    schema_file = BASE_DIR / "data" / "schema" / "contract_schema.json"
+    schema_file = BASE_DIR / "data" / "schemas" / "contract_schema.json"
     improved_schema = load_schema_from_json(schema_file)
 
     combined_true_values, combined_false_values = get_true_false_from_data_dict(
         args.data_dict
+    )
+    logger.info(
+        "Combined true values: %s\nCombined false values: %s",
+        combined_true_values,
+        combined_false_values,
     )
     convert_opts = pa_csv.ConvertOptions(
         column_types=improved_schema,
