@@ -113,7 +113,7 @@ def process_data(file_path: Path) -> pl.LazyFrame:
          and joins them with the final subset based on 'contract_award_unique_key'.
 
     Parameters:
-        file_path (str): The path to the input CSV file.
+        file_path (Path): The path to the input CSV file.
 
     Returns:
         pl.LazyFrame: A lazy frame representing the final processed subset of data.
@@ -177,10 +177,11 @@ def process_data(file_path: Path) -> pl.LazyFrame:
         for col in pl.scan_csv(
             file_path,
             schema_overrides={
-                "dod_acquisition_program_code": pl.Utf8,
-                "parent_award_agency_id": pl.Utf8,
-                "recipient_phone_number": pl.Utf8,
-                "recipient_fax_number": pl.Utf8,
+                "dod_acquisition_program_code": pl.String,
+                "parent_award_agency_id": pl.String,
+                "recipient_phone_number": pl.String,
+                "recipient_fax_number": pl.String,
+                "recipient_zip_4_code": pl.String,
             },
         )
         .collect_schema()
@@ -192,10 +193,11 @@ def process_data(file_path: Path) -> pl.LazyFrame:
             file_path,
             low_memory=True,
             schema_overrides={
-                "dod_acquisition_program_code": pl.Utf8,
-                "parent_award_agency_id": pl.Utf8,
-                "recipient_phone_number": pl.Utf8,
-                "recipient_fax_number": pl.Utf8,
+                "dod_acquisition_program_code": pl.String,
+                "parent_award_agency_id": pl.String,
+                "recipient_phone_number": pl.String,
+                "recipient_fax_number": pl.String,
+                "recipient_zip_4_code": pl.String,
             },
         )
         .select(["contract_award_unique_key"] + missing_columns)
