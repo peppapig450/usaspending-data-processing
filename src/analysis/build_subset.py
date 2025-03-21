@@ -15,6 +15,8 @@ Polars for efficient lazy evaluation, making it suitable for processing large da
 """
 
 import argparse
+from pathlib import Path
+
 import polars as pl
 
 # Define schema with explicit data types
@@ -91,7 +93,7 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def process_data(file_path: str) -> pl.LazyFrame:
+def process_data(file_path: Path) -> pl.LazyFrame:
     """
     Process the input CSV file and generate a subset of contract award data.
 
@@ -226,8 +228,13 @@ def main():
     This function is the entry point of the script when executed from the command line.
     """
     args = parse_args()
-    input_file = args.input_file
-    output_file = args.output_file
+    input_file = Path(args.input_file).resolve()
+    output_file = Path(args.output_file).resolve()
+
+    if not input_file.is_file():
+        raise FileNotFoundError(f"Input file does not exist: {input_file}")
+
+    output_file.parent.mkdir(parents=True, exist_ok=True)
 
     try:
         # Process the data
