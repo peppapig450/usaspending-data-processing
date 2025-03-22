@@ -184,3 +184,4 @@ data/test
 *.parquet
 
 src/analysis/test.py
+.vscode/launch.json
