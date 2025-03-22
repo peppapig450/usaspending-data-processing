@@ -1,14 +1,14 @@
 import argparse
+import json
 import logging
+import re
+from collections.abc import Generator
 from pathlib import Path
+from typing import Any
 
 import pyarrow as pa
 import pyarrow.csv as pa_csv
 import pyarrow.dataset as ds
-import pyarrow.parquet as pq
-from collections.abc import Generator
-from typing import Any
-import json
 import zstandard as zstd
 
 logger = logging.getLogger(__name__)
@@ -118,7 +118,7 @@ def get_true_false_from_data_dict(
 
         # Check if the field's keys match any of our boolean patterns
         for pattern, (true_key, false_key) in BOOL_PATTERNS.items():
-            if keys_set.issuperset(pattern):
+            if keys_set.issuperset(pattern) and len(keys_set) == 2:
                 # Extract and process true values
                 if true_key in field_values:
                     val = str(field_values[true_key]).strip()
@@ -311,45 +311,61 @@ def load_zstd_to_batches(
         - Generator yielding PyArrow RecordBatch objects
         - PyArrow Schema of the batches
     """
-    try:
-        with (
-            zstd_path.open("rb") as zstd_file,
-            zstd.ZstdDecompressor().stream_reader(zstd_file) as reader,
-        ):
-            csv_reader = pa_csv.open_csv(
-                reader,
-                read_options=pa_csv.ReadOptions(block_size=64 << 20),  # 64MB batches
-                parse_options=parse_opts,
-                convert_options=convert_opts,
+    # Open resources explicitly
+    zstd_file = zstd_path.open("rb")
+    reader = zstd.ZstdDecompressor().stream_reader(zstd_file)
+    csv_reader = pa_csv.open_csv(
+        reader,
+        read_options=pa_csv.ReadOptions(block_size=64 << 20),
+        parse_options=parse_opts,
+        convert_options=convert_opts,
+    )
+
+    schema = csv_reader.schema
+    # Extract the file sequence number from the filename (e.g., "1" from "FY2023_All_Contracts_Full_20250307_1.csv")
+    file_seq = re.search(r"_(\d+)\.csv.zst$", zstd_path.name)
+    file_id = file_seq.group(1) if file_seq else zstd_path.stem
+
+    schema_with_extras = schema.append(pa.field("year", pa.string())).append(
+        pa.field("file", pa.string())
+    )
+
+    def _batch_generator() -> Generator[pa.RecordBatch, None, None]:
+        logger.debug("Entering batch generator for %s", zstd_path)
+        batch_count = 0
+        try:
+            logger.debug("Starting batch reading with read_next_batch")
+            for batch in csv_reader:
+                logger.debug("Retrieved batch with %d rows", batch.num_rows)
+                year_array = pa.array([year] * batch.num_rows, type=pa.string())
+                file_array = pa.array([file_id] * batch.num_rows, type=pa.string())
+                batch_with_extras = pa.RecordBatch.from_arrays(
+                    batch.columns + [year_array, file_array],
+                    names=schema_with_extras.names,
+                )
+                batch_count += 1
+                logger.debug(
+                    "Yielding batch %d with %d rows for %s",
+                    batch_count,
+                    batch.num_rows,
+                    zstd_path,
+                )
+                yield batch_with_extras
+        except Exception as e:
+            logger.exception("Error fetching batch for %s: %s", zstd_path, str(e))
+            raise
+        finally:
+            # Clean up resources when generator is exhausted or errors
+            csv_reader.close()
+            reader.close()
+            zstd_file.close()
+            logger.info(
+                "Closed resources for %s after yielding %d batches",
+                zstd_path,
+                batch_count,
             )
-            logger.debug("Schema: %s", csv_reader.schema)
 
-            # Extend the schema to include the "year" field
-            schema = csv_reader.schema
-            schema_with_year = schema.append(pa.field("year", pa.string()))
-
-            def _batch_generator() -> Generator[pa.RecordBatch, None, None]:
-                for batch in csv_reader:
-                    year_array = pa.array([year] * batch.num_rows, type=pa.string())
-                    batch_with_year = pa.RecordBatch.from_arrays(
-                        batch.columns + [year_array],
-                        names=schema_with_year.names,
-                    )
-                    yield batch_with_year
-
-            return _batch_generator(), schema_with_year
-
-    except zstd.ZstdError:
-        logger.exception(
-            "Zstd decompression error processing %s", zstd_path, stack_info=True
-        )
-        return empty_generator(), pa.schema([])
-    except IOError:
-        logger.exception("IO error processing %s", zstd_path)
-        return empty_generator(), pa.schema([])
-    except Exception:
-        logger.exception("Unexpected error processing %s", zstd_path)
-        return empty_generator(), pa.schema([])
+    return _batch_generator(), schema_with_extras
 
 
 def create_partitioned_dataset(
@@ -371,10 +387,12 @@ def create_partitioned_dataset(
 
     # Parquet file options for dataset
     file_options = ds.ParquetFileFormat(
-        read_options=None, default_fragment_scan_options=None #type: ignore
+        read_options=None,  # type: ignore
+        default_fragment_scan_options=None,  # type: ignore
     ).make_write_options(
-        compression="zstd", compression_level=9, data_page_size=64 << 20 #type: ignore
-    )  # type: ignore
+        compression="zstd",  # type: ignore
+        compression_level=9,  # type: ignore
+    )
 
     # Process each directory (year)
     for year, input_dir in years_dirs:
@@ -390,31 +408,44 @@ def create_partitioned_dataset(
         for file_path in zstd_files:
             file_size = file_path.stat().st_size
             logger.info("Processing file %s with size %d bytes", file_path, file_size)
+
             batch_iter, file_schema = load_zstd_to_batches(
                 file_path, year, convert_opts, parse_opts
             )
-            # Check if "year" is in the schema
-            if "year" not in file_schema.names:
+
+            required_fields = {"year", "file"}
+            if not required_fields.issubset(file_schema.names):
                 logger.warning(
-                    "Skipping file %s due to missing 'year' field in schema", file_path
+                    "Skipping file %s due to missing fields %s",
+                    file_path,
+                    required_fields - set(file_schema.names),
                 )
                 continue
-            # Write all batches for this year as one table
-            ds.write_dataset(
-                data=batch_iter,
-                base_dir=output_dir,
-                schema=file_schema,
-                format="parquet",
-                partitioning=ds.partitioning(
-                    pa.schema([file_schema.field("year")]),
-                    flavor="hive",  # type: ignore
-                ),
-                existing_data_behavior="overwrite_or_ignore",
-                file_options=file_options,
-            )
-            logger.info("Wrote %s partition", year)
-        else:
-            logger.warning("No valid data processed for %s", year)
+
+            try:
+                partitioning_schema = pa.schema(
+                    [
+                        file_schema.field("year"),
+                        file_schema.field(
+                            "file"
+                        ),  # Partition by "file" instead of "file_name"
+                    ]
+                )
+                ds.write_dataset(
+                    data=batch_iter,
+                    base_dir=output_dir,
+                    schema=file_schema,
+                    format="parquet",
+                    partitioning=ds.partitioning(
+                        partitioning_schema,
+                        flavor="hive",
+                    ),
+                    existing_data_behavior="overwrite_or_ignore",
+                    file_options=file_options,
+                )
+                logger.info("Wrote partition for year=%s", year)
+            except Exception:
+                logger.exception("Failed to write dataset for file %s", file_path)
 
 
 def parse_args() -> argparse.Namespace:
