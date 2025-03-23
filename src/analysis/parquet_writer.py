@@ -313,7 +313,7 @@ def load_zstd_to_batches(
     """
     # Open resources explicitly
     zstd_file = zstd_path.open("rb")
-    reader = zstd.ZstdDecompressor().stream_reader(zstd_file)
+    reader = zstd.ZstdDecompressor(max_window_size=2 << 30).stream_reader(zstd_file)
     csv_reader = pa_csv.open_csv(
         reader,
         read_options=pa_csv.ReadOptions(block_size=64 << 20),
