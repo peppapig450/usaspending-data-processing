@@ -9,9 +9,11 @@ import logging
 logger = logging.getLogger(__name__)
 FILENAME_REGEX = re.compile(r"_(\d+)\.csv.zst$")
 
+
 def empty_generator() -> Generator[pa.RecordBatch, None, None]:
     """Yield an empty generator."""
     yield from ()
+
 
 def load_zstd_to_batches(
     zstd_path: Path,

@@ -39,7 +39,6 @@ INITIAL_COLUMNS = list(SCHEMA_DICT.keys())
 SCHEMA = pl.Schema(SCHEMA_DICT)
 
 
-
 def parse_args() -> argparse.Namespace:
     """
     Parse command-line arguments for the input and output CSV file paths.
