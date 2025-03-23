@@ -18,6 +18,7 @@ import argparse
 from pathlib import Path
 
 import polars as pl
+from src.utils import to_bool
 
 # Define schema with explicit data types
 SCHEMA_DICT: dict[str, pl.DataType] = {
@@ -37,29 +38,6 @@ INITIAL_COLUMNS = list(SCHEMA_DICT.keys())
 
 SCHEMA = pl.Schema(SCHEMA_DICT)
 
-
-def to_bool(value):
-    """
-    Convert a string representation of a boolean to an actual boolean type.
-
-    The conversion is performed using a match-case structure:
-      - "t" (case-insensitive) returns True.
-      - "f" (case-insensitive) returns False.
-      - Any other value returns None.
-
-    Parameters:
-        value: The input value to be converted.
-
-    Returns:
-        bool or None: The converted boolean value or None if conversion is not possible.
-    """
-    match str(value).lower():
-        case "t":
-            return True
-        case "f":
-            return False
-        case _:
-            return None
 
 
 def parse_args() -> argparse.Namespace:
