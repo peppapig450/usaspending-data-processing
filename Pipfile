@@ -8,6 +8,9 @@ polars = "*"
 zstandard = "*"
 rich = "*"
 pyarrow = "*"
+numpy = "*"
+plotly = {extras = ["express"], version = "*"}
+dash = "*"
 
 [dev-packages]
 pyarrow-stubs = "*"

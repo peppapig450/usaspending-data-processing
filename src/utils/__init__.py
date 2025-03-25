@@ -1,5 +1,6 @@
 from .conversion_utils import generate_case_variations, to_bool
 from .data_dict_utils import get_true_false_from_data_dict
+from .data_loader import get_unique_values, load_dataset
 from .file_utils import load_zstd_to_batches
 from .schema_utils import load_schema_from_json
 
@@ -9,4 +10,6 @@ __all__ = [
     "to_bool",
     "load_zstd_to_batches",
     "load_schema_from_json",
+    "get_unique_values",
+    "load_dataset",
 ]
