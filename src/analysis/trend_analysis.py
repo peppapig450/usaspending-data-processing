@@ -80,7 +80,14 @@ def analyze_sector_funding(lazy_df: pl.LazyFrame, top_n: int = 5) -> pl.DataFram
             .map_elements(map_sector, return_dtype=pl.String)
             .alias("sector_name")
         )
-        .group_by(["action_date_fiscal_year", "naics_code", "naics_description"])
+        .group_by(
+            [
+                "action_date_fiscal_year",
+                "sector_name",
+                "naics_code",
+                "naics_description",
+            ]
+        )
         .agg(
             pl.col("total_dollars_obligated").sum().alias("total_funding"),
             pl.len().alias("number_of_awards"),
